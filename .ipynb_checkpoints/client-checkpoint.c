@@ -17,15 +17,15 @@ int main(int argc, char *argv[])
     
     clientfd = Open_clientfd(host, port);
     // welcome user.
-        printf("\n---------------------\n Welcome to RaiderVibe\n-------------------\n\n If you are a new user select (1) to sign up otherwise select (2) to log in \n");
+        printf("\n---------------------\n Welcome to RaiderVibe\n-------------------\n\n If you are a new user select (1) to sign up otherwise select (2) to log in and 3 to exit\n");
         printf("Select an option [1 or 2}: ");
         bzero(buffer, MAXLINE);
         Fgets(buffer, MAXLINE, stdin);
         option = atoi(buffer);
         //make sure input is valid before sending to server. 
-        while (option != 1 && option != 2){
+        while (option != 1 && option != 2 && option != 3){
             printf("Please select a valid option\n");
-            printf("Select an option [1 or 2}: ");
+            printf("Select an option [1, 2 or 3}: ");
             bzero(buffer, MAXLINE);
             Fgets(buffer, MAXLINE, stdin);
             option = atoi(buffer);
@@ -33,6 +33,8 @@ int main(int argc, char *argv[])
 
         // Send the option to the server.
         Write(clientfd, buffer, strlen(buffer));
+        //ask for user's username based on if he wants to login or signup
+        if 
          // Read and display the server's response whee user is successfully logges in or signed up.
         bzero(buffer, MAXLINE);
         Read(clientfd, buffer, MAXLINE);

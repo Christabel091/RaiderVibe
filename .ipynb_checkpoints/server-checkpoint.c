@@ -58,6 +58,10 @@ void *serverFunction(void *vargp) {
         
     }else if (option == 2){
         
+    }else{
+        const char *msg = "Successfully lpgged out\n";
+        Write(connfd, msg, strlen(msg));
+        return NULL;
     }
 
         
