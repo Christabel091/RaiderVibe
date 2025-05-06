@@ -86,13 +86,18 @@ int main(int argc, char *argv[])
         *request = (char)tolower((unsigned char)*request);
         }
         if(strcmp(request, "post") == 0){
+            char post[500];
             Write(clientfd, request, strlen(request));
             printf("Create a new post(Enter a max of 500 characters): ");
+            Fgets(request, MAXLINE, stdin);
+
         }else if(strcmp(request, "like") == 0){
 
         }else if(strcmp(request, "comment") == 0){
 
         }else if(strcmp(request, "search") == 0){
+
+        }else if(strcmp(request, "log-out") == 0){
 
         }else if(strcmp(request, "log-out") == 0){
 

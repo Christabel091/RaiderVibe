@@ -129,14 +129,20 @@ void *serverFunction(void *vargp) {
     Read(connfd, request, MAXLINE);
     //perform services for client based on input word from user like "post"
     if(strcmp(request, "post") == 0){
+        //receive newly created post from user and store it
         
     }else if(strcmp(request, "like") == 0){
+        //you can like on most recent shared post by a different user.
 
     }else if(strcmp(request, "comment") == 0){
+        //you can comment on most recent shared post by a different user.
 
     }else if(strcmp(request, "search") == 0){
 
     }else if(strcmp(request, "log-out") == 0){
+
+    }else if(strcmp(request, "list") == 0){
+        //share post of othe clients with this user..o
 
     }else{
 
