@@ -1,189 +1,229 @@
 // server.c
 #include "csapp.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <stdbool.h>
 #include <pthread.h>
 #include <semaphore.h>
-#include <string.h>   // for str comparism
+#include <time.h>
+#include <ctype.h>
 
-#ifndef MAX_SIZE
-#define MAX_SIZE 8192
-#endif
+#define MAXLINE      1024
+#define MAXCLIENTS   100
+#define MAX_USERNAME 64
+#define TAIL_LINES   10
 
-// Reader-writer synchronization primitives/variables
-static sem_t mutex, wlock;
-static int readcnt = 0;
-// Initialize locks
-void init_locks() {
-    sem_init(&mutex, 0, 1);
-    sem_init(&wlock, 0, 1);
-}
+static int client_socks[MAXCLIENTS];
+static int client_count = 0;
+static pthread_mutex_t clients_mtx = PTHREAD_MUTEX_INITIALIZER;
+static sem_t wlock;
 
-// Destroy locks (never really called)
-void destroy_locks() {
-    sem_destroy(&mutex);
-    sem_destroy(&wlock);
-}
-
-// Reader entry
-void reader_lock() {
-    sem_wait(&mutex);
-    if (readcnt++ == 0)
-        sem_wait(&wlock);
-    sem_post(&mutex);
-}
-
-// Reader exit
-void reader_unlock() {
-    sem_wait(&mutex);
-    if (--readcnt == 0)
-        sem_post(&wlock);
-    sem_post(&mutex);
-}
-bool searchforUser(char username[]){
-    reader_lock();
-     FILE *file = fopen("username.txt", "r");
-    if (!file) {
-        snprintf(result, MAX_SIZE, "Error opening records file.\n");
-        reader_unlock();
-        return result;
+void strip_nl(char *s) {
+    while (*s) {
+        if (*s=='\n' || *s=='\r') *s='\0';
+        s++;
     }
-    bool found = false;
-    char User[500];
-    while (fgets(line, sizeof(line), file)) {
-        if (sscanf(line, "%[^,]", == 1)){
-            if (strcmp(username, User) == 0){
-                found = true;
-            }
+}
+
+void add_client(int fd) {
+    pthread_mutex_lock(&clients_mtx);
+    if (client_count < MAXCLIENTS)
+        client_socks[client_count++] = fd;
+    pthread_mutex_unlock(&clients_mtx);
+}
+
+void remove_client(int fd) {
+    pthread_mutex_lock(&clients_mtx);
+    for (int i=0; i<client_count; i++) {
+        if (client_socks[i] == fd) {
+            client_socks[i] = client_socks[--client_count];
+            break;
         }
     }
-     fclose(file);
-    reader_unlock();
-    return found;
-
+    pthread_mutex_unlock(&clients_mtx);
 }
-bool signUserUp(char username[]){
-    //call search user function to check if username exists or is in the file or not
-    if (searchforUser(username)){
-        return false;
-    }else{
-         sem_wait(&wlock);
-            FILE *file = fopen("username.txt", "a");
-            if (!file) {
-                return false;
-            } else {
-                fprintf(file, "%s\n",
-                        username);
-                fclose(file);
+
+void broadcast_msg(const char *msg, int exclude_fd) {
+    pthread_mutex_lock(&clients_mtx);
+    for (int i=0; i<client_count; i++) {
+        if (client_socks[i] != exclude_fd)
+            Write(client_socks[i], msg, strlen(msg));
+    }
+    pthread_mutex_unlock(&clients_mtx);
+}
+
+int generate_unique_postID() {
+    int id;
+    FILE *f;
+    char line[32];
+    bool found;
+    do {
+        id = (rand()%9000000) + 1000000;
+        found = false;
+        if ((f = fopen("postid.txt","r"))) {
+            while (fgets(line,sizeof(line),f)) {
+                if (atoi(line)==id) { found=true; break; }
+            }
+            fclose(f);
+        }
+    } while(found);
+    sem_wait(&wlock);
+    if ((f = fopen("postid.txt","a"))) {
+        fprintf(f,"%d\n",id);
+        fclose(f);
+    }
+    sem_post(&wlock);
+    return id;
+}
+
+void store_comment(const char *post_id, const char *user, const char *text) {
+    sem_wait(&wlock);
+    FILE *f = fopen("comments.txt","a");
+    if (f) {
+        time_t t=time(NULL);
+        char ts[32]; strftime(ts,sizeof(ts),"%Y-%m-%d %H:%M:%S",localtime(&t));
+        fprintf(f,"%s|%s|%s|%s\n",post_id,user,ts,text);
+        fclose(f);
+    }
+    sem_post(&wlock);
+}
+
+void store_like(const char *post_id, const char *user) {
+    sem_wait(&wlock);
+    FILE *f = fopen("likes.txt","a");
+    if (f) {
+        time_t t=time(NULL);
+        char ts[32]; strftime(ts,sizeof(ts),"%Y-%m-%d %H:%M:%S",localtime(&t));
+        fprintf(f,"%s|%s|%s\n",user,post_id,ts);
+        fclose(f);
+    }
+    sem_post(&wlock);
+}
+
+void *server_thread(void *vargp) {
+    int connfd = *((int*)vargp);
+    free(vargp);
+    add_client(connfd);
+
+    char buf[MAXLINE], user[MAX_USERNAME];
+    int n;
+
+    // Authentication
+    Read(connfd, buf, MAXLINE); strip_nl(buf);
+    int opt = atoi(buf);
+    Read(connfd, user, MAX_USERNAME); strip_nl(user);
+    if (opt==1) {
+        // Register
+        sem_wait(&wlock);
+        FILE *f = fopen("users.txt","r+");
+        bool exists=false;
+        if (f) {
+            char line[MAXLINE];
+            while(fgets(line,MAXLINE,f)) { strip_nl(line); if(strcmp(line,user)==0) {exists=true; break;} }
+            if (!exists) fprintf(f,"%s\n",user);
+            fclose(f);
+        }
+        sem_post(&wlock);
+        if (exists) Write(connfd,"[ERROR] Username taken.\n",25);
+        else       Write(connfd,"[OK] Username registered.\n",25);
+        if (exists) { remove_client(connfd); Close(connfd); return NULL; }
+    } else {
+        // Login
+        sem_wait(&wlock);
+        FILE *f = fopen("users.txt","r");
+        bool found=false;
+        if (f) {
+            char line[MAXLINE];
+            while(fgets(line,MAXLINE,f)) { strip_nl(line); if(strcmp(line,user)==0){found=true;break;} }
+            fclose(f);
+        }
+        sem_post(&wlock);
+        if (!found) { Write(connfd,"[ERROR] Username not found.\n",27); remove_client(connfd); Close(connfd); return NULL; }
+        Write(connfd,"[OK] Logged in.\n",16);
+    }
+
+    // Command loop
+    while ((n=Read(connfd,buf,MAXLINE))>0) {
+        strip_nl(buf);
+        if (strcmp(buf,"post")==0) {
+            Read(connfd,buf,MAXLINE); strip_nl(buf);
+            int pid = generate_unique_postID();
+            sem_wait(&wlock);
+            FILE *f = fopen("posts.txt","a");
+            if (f) {
+                fprintf(f,"%s|%07d|%s\n",user,pid,buf);
+                fclose(f);
             }
             sem_post(&wlock);
-        return true;
+            char ack[MAXLINE]; snprintf(ack,sizeof(ack),"[OK] Post #%07d submitted.\n",pid);
+            Write(connfd,ack,strlen(ack));
+            char notif[MAXLINE]; snprintf(notif,sizeof(notif),"New post #%07d by %s: %s\n",pid,user,buf);
+            broadcast_msg(notif,connfd);
+        }
+        else if (strcmp(buf,"comment")==0) {
+            Read(connfd,buf,MAXLINE); strip_nl(buf);
+            char post_id[32]; strcpy(post_id,buf);
+            Read(connfd,buf,MAXLINE); strip_nl(buf);
+            store_comment(post_id,user,buf);
+            Write(connfd,"[OK] Comment added.\n",21);
+            char notif[MAXLINE]; snprintf(notif,sizeof(notif),"New comment on #%s by %s: %s\n",post_id,user,buf);
+            broadcast_msg(notif,connfd);
+        }
+        else if (strcmp(buf,"like")==0) {
+            Read(connfd,buf,MAXLINE); strip_nl(buf);
+            store_like(buf,user);
+            Write(connfd,"[OK] Like recorded.\n",20);
+        }
+        else if (strcmp(buf,"search")==0) {
+            Read(connfd,buf,MAXLINE); strip_nl(buf);
+            FILE *f = fopen("posts.txt","r"); int cnt=0;
+            while(fgets(user,MAXLINE,f)) if (strstr(user,buf)) cnt++;
+            rewind(f);
+            char tmp[16]; sprintf(tmp,"%d",cnt); Write(connfd,tmp,strlen(tmp));
+            while(fgets(user,MAXLINE,f)) {
+                if (!strstr(user,buf)) continue;
+                strip_nl(user);
+                char *u=strtok(user,"|"); char *d=strtok(NULL,"|"); char *p=strtok(NULL,"\0");
+                Write(connfd,u,strlen(u)); Write(connfd,"\n",1);
+                Write(connfd,d,strlen(d)); Write(connfd,"\n",1);
+                Write(connfd,p,strlen(p)); Write(connfd,"\n",1);
+            }
+            fclose(f);
+        }
+        else if (strcmp(buf,"list")==0) {
+            char lines[TAIL_LINES][MAXLINE]; int idx=0;
+            FILE *f = fopen("posts.txt","r");
+            while (fgets(lines[idx%TAIL_LINES],MAXLINE,f)) idx++;
+            int total = idx<TAIL_LINES?idx:TAIL_LINES;
+            char tmp[16]; sprintf(tmp,"%d",total); Write(connfd,tmp,strlen(tmp));
+            int start = idx<TAIL_LINES?0:idx%TAIL_LINES;
+            for (int i=0;i<total;i++) {
+                char *l = lines[(start+i)%TAIL_LINES]; strip_nl(l);
+                char *u=strtok(l,"|"); char *d=strtok(NULL,"|"); char *p=strtok(NULL,"\0");
+                Write(connfd,u,strlen(u)); Write(connfd,"\n",1);
+                Write(connfd,d,strlen(d)); Write(connfd,"\n",1);
+                Write(connfd,p,strlen(p)); Write(connfd,"\n",1);
+            }
+            fclose(f);
+        }
+        else if (strcmp(buf,"logout")==0) break;
     }
-
-}
-bool logUserIn(char username[]){
-    //call search for user function to see if username exists and user can b logged in. 
-     if (searchforUser(username)){
-        return true;
-    }else{
-        return false;
-    }
-}
-void *serverFunction(void *vargp) {
-    int connfd = *((int *)vargp);
-    free(vargp);
-
-    char buf[MAXLINE];
-
-    //buf represent buffer, input from terminal whether to log in or sign up 
-    int n = Read(connfd, buf, MAXLINE);
-    if (n <= 0) // client closed
-        break;
-    buf[n] = '\0';
-    strip_nl(buf);
-    int option = atoi(buf);
-    //next, log user in by checking for thier name in the file or signing them up  appending their username to the useraname.txt file 
-    char username[MAX_SIZE];
-     bool sucess = false;
-    if (option == 1){
-        //add users username into file.
-        Read(connfd, username, MAXLINE);
-        strip_nl(username);
-        bool sucess = signUserUp(username); 
-        Write(connfd, sucess, strlen(result));
-        free(sucess);
-    }else if (option == 2){
-        //check if username is in the username text  file and exists. 
-        Read(connfd, username, MAXLINE);
-        strip_nl(username);
-        bool sucess = logUserIn(username);
-        Write(connfd, sucess, strlen(sucess));
-        free(sucess);
-    }else{
-        const char *msg = "Successfully lpgged out\n";
-        Write(connfd, msg, strlen(msg));
-        return NULL;
-    }
-    //server has succesfully handles signup and log in
-    //now handle app requests like posting, liking commenting. e.t.c
-    char request[MAXLINE];
-    Read(connfd, request, MAXLINE);
-    //perform services for client based on input word from user like "post"
-    if(strcmp(request, "post") == 0){
-        //receive newly created post from user and store it
-        
-    }else if(strcmp(request, "like") == 0){
-        //you can like on most recent shared post by a different user.
-
-    }else if(strcmp(request, "comment") == 0){
-        //you can comment on most recent shared post by a different user.
-
-    }else if(strcmp(request, "search") == 0){
-
-    }else if(strcmp(request, "log-out") == 0){
-
-    }else if(strcmp(request, "list") == 0){
-        //share post of othe clients with this user..o
-
-    }else{
-
-    }
-        
-
+    remove_client(connfd);
     Close(connfd);
     return NULL;
-
 }
-int main(int argc, char *argv[]) {
-    int listenfd;
-    socklen_t clientlen;
-    struct sockaddr_storage clientaddr;
-    char client_hostname[MAXLINE], client_port[MAXLINE];
 
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s <port>\n", argv[0]);
-        exit(0);
-    }
-
-    init_locks();
-    listenfd = Open_listenfd(argv[1]);
-
+int main(int argc, char **argv) {
+    if (argc!=2) { fprintf(stderr,"usage: %s <port>\n",argv[0]); exit(0); }
+    srand(time(NULL)); sem_init(&wlock,0,1);
+    int listenfd = Open_listenfd(argv[1]);
     while (1) {
-        clientlen = sizeof(clientaddr);
+        struct sockaddr_storage cliaddr; socklen_t len=sizeof(cliaddr);
         int *connfdp = malloc(sizeof(int));
-        *connfdp = Accept(listenfd,
-                          (SA *)&clientaddr,
-                          &clientlen);
-        Getnameinfo((SA *)&clientaddr, clientlen,
-                    client_hostname, MAXLINE,
-                    client_port,   MAXLINE, 0);
-        printf("Connected to (%s, %s)\n",
-               client_hostname, client_port);
-
-        pthread_t tid;
-        pthread_create(&tid, NULL, serverFunction, connfdp);
+        *connfdp = Accept(listenfd,(SA*)&cliaddr,&len);
+        pthread_t tid; pthread_create(&tid,NULL,server_thread,connfdp);
         pthread_detach(tid);
     }
-
-    destroy_locks();
     return 0;
 }

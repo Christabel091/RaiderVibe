@@ -1,4 +1,12 @@
 #include "csapp.h"
+#include <ctype.h>
+#include <stdbool.h>
+#include <string.h>
+
+void strip_nl(char *str) {
+    size_t len = strlen(str);
+    if (len > 0 && str[len - 1] == '\n') str[len - 1] = '\0';
+}
 
 int main(int argc, char *argv[])
 {
@@ -6,6 +14,9 @@ int main(int argc, char *argv[])
     char *host, *port;
     char buffer[MAXLINE];
     int option = 0;
+    char username[MAXLINE];
+    char request[MAXLINE];
+    bool success = false;
 
     if (argc != 3) {
         fprintf(stderr, "usage: %s <host> <port>\n", argv[0]);
@@ -14,112 +25,162 @@ int main(int argc, char *argv[])
 
     host = argv[1];
     port = argv[2];
-    
     clientfd = Open_clientfd(host, port);
-    // welcome user.
-        printf("\n---------------------\n Welcome to RaiderVibe\n-------------------\n\n If you are a new user select (1) to sign up otherwise select (2) to log in and 3 to exit\n");
-        bool sucess = false;
-        char Username[];
-        char request[]
-        do{
-             printf("Select an option [1 or 2}: ");
+
+    printf("\n---------------------\n Welcome to RaiderVibe\n---------------------\n\n");
+    printf("If you are a new user select (1) to sign up, (2) to log in, or (3) to exit\n");
+
+    do {
+        printf("Select an option [1, 2 or 3]: ");
         bzero(buffer, MAXLINE);
         Fgets(buffer, MAXLINE, stdin);
         option = atoi(buffer);
-        //make sure input is valid before sending to server. 
-        while (option != 1 && option != 2 && option != 3){
-            printf("Please select a valid option\n");
-            printf("Select an option [1, 2 or 3}: ");
+
+        while (option != 1 && option != 2 && option != 3) {
+            printf("Invalid option. Try again [1, 2 or 3]: ");
             bzero(buffer, MAXLINE);
             Fgets(buffer, MAXLINE, stdin);
             option = atoi(buffer);
         }
 
-        // Send the option to the server.
-        Write(clientfd, buffer, strlen(buffer));
-        //ask for user's username based on if he wants to login or signup
-        if (option == 1){
-            //if user is signing up
-            printf("Enter a new Username: ");
-            bzero(username, MAXLINE);
-            Fgets(username, MAXLINE, stdin);
-            Write(clientfd, username, strlen(username));
-            bzero(buffer, MAXLINE);
-            Read(clientfd, buffer, MAXLINE);
-            success = buffer;
-            if (!success){
-                printf("An error occoured due to usernam already exxist or bad usrname. Please try another username");
-            }
-            else{
-                printf("Successfully signed up\n");
-                printf("Commands: \n Enter \n post — create a new post
-                        list — show latest posts
-                        comment — comment on a post
-                        like — like a post
-                        search — keyword search
-                        logout — log out\n");
-               
-            }
-        }else if (option == 2){
-            //if user is logging in.
-            printf("Enter a Usrname: ");
-            bzero(username, MAXLINE);
-            Fgets(username, MAXLINE, stdin);
-            Write(clientfd, username, strlen(username));
-            bzero(buffer, MAXLINE);
-            Read(clientfd, buffer, MAXLINE);
-            sucess = buffer;
-             if (!success){
-                printf("Username does not exist. please verify username and try agin o signup");
-            }else{
-                printf("Successfully logged in\n");
-                
-
-            }
+        if (option == 3) {
+            printf("Goodbye!\n");
+            Close(clientfd);
+            return 0;
         }
-        }while (!sucess);
-        //execute request of user whether it is creating a posr, liking or searching up. 
-        printf("%s@RaiderVibe>", username);
+
+        Write(clientfd, buffer, strlen(buffer));  // send option
+
+        printf("Enter your username: ");
+        bzero(username, MAXLINE);
+        Fgets(username, MAXLINE, stdin);
+        strip_nl(username);
+        Write(clientfd, username, strlen(username));
+
+        bzero(buffer, MAXLINE);
+        Read(clientfd, buffer, MAXLINE);
+
+        if (strncmp(buffer, "OK", 2) == 0) {
+            success = true;
+            printf("Successfully %s\n", option == 1 ? "signed up" : "logged in");
+            printf("Commands: post | list | comment | like | search | logout\n");
+        } else {
+            printf("Error: %s\n", buffer);
+        }
+
+    } while (!success);
+
+    while (true) {
+        printf("%s@RaiderVibe> ", username);
+        bzero(request, MAXLINE);
         Fgets(request, MAXLINE, stdin);
-        //change string to lower case before comaprism
-        for ( ; *request; ++request ) {
-        *request = (char)tolower((unsigned char)*request);
+        strip_nl(request);
+
+        // convert to lowercase
+        for (int i = 0; request[i]; i++) {
+            request[i] = tolower(request[i]);
         }
-        if(strcmp(request, "post") == 0){
-            char post[500];
-            Write(clientfd, request, strlen(request));
-            printf("Create a new post(Enter a max of 500 characters): ");
-            Fgets(request, MAXLINE, stdin);
 
-        }else if(strcmp(request, "like") == 0){
+        Write(clientfd, request, strlen(request));
 
-        }else if(strcmp(request, "comment") == 0){
+        if (strcmp(request, "post") == 0) {
+            char post[1000];
+            printf("Create a new post (max 1000 characters): ");
+            Fgets(post, sizeof(post), stdin);
+            Write(clientfd, post, strlen(post));
+            bzero(buffer, MAXLINE);
+            Read(clientfd, buffer, MAXLINE);
+            printf("%s\n", buffer);
 
-        }else if(strcmp(request, "search") == 0){
+        } else if (strcmp(request, "like") == 0) {
+            printf("Enter post ID to like: ");
+            bzero(buffer, MAXLINE);
+            Fgets(buffer, MAXLINE, stdin);
+            strip_nl(buffer);
+            Write(clientfd, buffer, strlen(buffer));
+            bzero(buffer, MAXLINE);
+            Read(clientfd, buffer, MAXLINE);
+            printf("%s\n", buffer);
 
-        }else if(strcmp(request, "log-out") == 0){
+        } else if (strcmp(request, "comment") == 0) {
+            printf("Enter post ID to comment on: ");
+            bzero(buffer, MAXLINE);
+            Fgets(buffer, MAXLINE, stdin);
+            strip_nl(buffer);
+            Write(clientfd, buffer, strlen(buffer));
 
-        }else if(strcmp(request, "log-out") == 0){
+            printf("Enter your comment: ");
+            bzero(buffer, MAXLINE);
+            Fgets(buffer, MAXLINE, stdin);
+            strip_nl(buffer);
+            Write(clientfd, buffer, strlen(buffer));
 
-        }else{
+            bzero(buffer, MAXLINE);
+            Read(clientfd, buffer, MAXLINE);
+            printf("%s\n", buffer);
 
+        } else if (strcmp(request, "search") == 0) {
+            char keyword[50];
+            printf("Enter keyword to search: ");
+            bzero(keyword, sizeof(keyword));
+            Fgets(keyword, sizeof(keyword), stdin);
+            strip_nl(keyword);
+            Write(clientfd, keyword, strlen(keyword));
+
+            bzero(buffer, MAXLINE);
+            Read(clientfd, buffer, MAXLINE);
+            int count = atoi(buffer);
+
+            if (count <= 0) {
+                printf("No posts found.\n");
+            } else {
+                for (int i = 0; i < count; i++) {
+                    printf("[Post #%d] ", i + 1);
+                    bzero(buffer, MAXLINE);
+                    Read(clientfd, buffer, MAXLINE); // username
+                    printf("%s ", buffer);
+                    bzero(buffer, MAXLINE);
+                    Read(clientfd, buffer, MAXLINE); // time
+                    printf("(%s)\n", buffer);
+                    bzero(buffer, MAXLINE);
+                    Read(clientfd, buffer, MAXLINE); // content
+                    printf("  %s\n\n", buffer);
+                }
+            }
+
+        } else if (strcmp(request, "list") == 0) {
+            bzero(buffer, MAXLINE);
+            Read(clientfd, buffer, MAXLINE);
+            int count = atoi(buffer);
+
+            if (count == 0) {
+                bzero(buffer, MAXLINE);
+                Read(clientfd, buffer, MAXLINE);
+                printf("%s\n", buffer);
+            } else {
+                for (int i = 0; i < count; i++) {
+                    printf("[Post #%d] ", i + 1);
+                    bzero(buffer, MAXLINE);
+                    Read(clientfd, buffer, MAXLINE); // username
+                    printf("%s ", buffer);
+                    bzero(buffer, MAXLINE);
+                    Read(clientfd, buffer, MAXLINE); // time
+                    printf("(%s)\n", buffer);
+                    bzero(buffer, MAXLINE);
+                    Read(clientfd, buffer, MAXLINE); // post
+                    printf("  %s\n\n", buffer);
+                }
+            }
+
+        } else if (strcmp(request, "logout") == 0) {
+            printf("%s, you are successfully logged out. See you soon!\n", username);
+            break;
+
+        } else {
+            printf("Invalid command. Try again.\n");
         }
-        // Read and display the server's response whee user is successfully logges in or signed up.
-        bzero(buffer, MAXLINE);
-        Read(clientfd, buffer, MAXLINE);
-        printf("Message from Server: %s\n", buffer);
-    // Client interaction loop.
-    while (1) {
-        
-        
-        }
-        
-        // Read and display the server's response.
-        bzero(buffer, MAXLINE);
-        Read(clientfd, buffer, MAXLINE);
-        printf("Message from Server: %s\n", buffer);
     }
-    
+
     Close(clientfd);
     return 0;
 }
